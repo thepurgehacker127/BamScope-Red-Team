@@ -6,47 +6,43 @@ from scapy.all import ARP, Ether, srp, conf
 from typing import List, Dict
 import ipaddress
 
+from network.vendor import lookup_vendor
+from network.hostname import resolve_hostname
+
 
 def arp_scan(target: str, interface: str = None, timeout: int = 2) -> List[Dict[str, str]]:
     """
-    Perform an ARP scan on the given target (CIDR, IP, or range).
-
-    Returns a list of dictionaries:
-    [
-        {
-            "ip": "192.168.1.10",
-            "mac": "aa:bb:cc:dd:ee:ff",
-            "method": "ARP"
-        },
-        ...
-    ]
+    Perform an ARP scan and enrich results with vendor and hostname.
     """
-    conf.verb = 0  # silence Scapy output
+    conf.verb = 0
 
     if interface:
         conf.iface = interface
 
     try:
-        # Build ARP request
         arp = ARP(pdst=target)
         ether = Ether(dst="ff:ff:ff:ff:ff:ff")
         packet = ether / arp
 
-        # Send and receive
         answered, _ = srp(packet, timeout=timeout, verbose=0)
 
         results = []
         for sent, received in answered:
+            ip = received.psrc
+            mac = received.hwsrc
+
+            vendor = lookup_vendor(mac)
+            hostname = resolve_hostname(ip)
+
             results.append({
-                "ip": received.psrc,
-                "mac": received.hwsrc,
-                "hostname": "",
-                "vendor": "",
+                "ip": ip,
+                "mac": mac,
+                "hostname": hostname,
+                "vendor": vendor,
                 "status": "Up",
                 "method": "ARP"
             })
 
-        # Sort by IP
         results.sort(key=lambda x: ipaddress.IPv4Address(x["ip"]))
         return results
 
