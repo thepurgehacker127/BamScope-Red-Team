@@ -7,16 +7,36 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QFrame, QComboBox, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QProgressBar, QAbstractItemView
+    QProgressBar, QAbstractItemView, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 
 from network.interfaces import get_network_interfaces
+from discovery.arp_scanner import arp_scan
+
+
+class ScanWorker(QThread):
+    """Runs the ARP scan in a background thread so the GUI stays responsive."""
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, target: str, interface: str):
+        super().__init__()
+        self.target = target
+        self.interface = interface
+
+    def run(self):
+        try:
+            results = arp_scan(self.target, interface=self.interface)
+            self.finished.emit(results)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class DiscoveryPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.worker = None
         self._build_ui()
         self._load_interfaces()
 
@@ -214,7 +234,6 @@ class DiscoveryPage(QWidget):
         self.stop_btn.clicked.connect(self._on_stop)
 
     def _load_interfaces(self):
-        """Populate the interface dropdown with real interfaces."""
         self.interface_combo.clear()
         interfaces = get_network_interfaces()
 
@@ -229,7 +248,6 @@ class DiscoveryPage(QWidget):
                 label = f"{iface['name']}  —  No IPv4"
             self.interface_combo.addItem(label, userData=iface["name"])
 
-        # Auto-select the first interface that has an IP
         for i in range(self.interface_combo.count()):
             if "No IPv4" not in self.interface_combo.itemText(i):
                 self.interface_combo.setCurrentIndex(i)
@@ -243,26 +261,62 @@ class DiscoveryPage(QWidget):
             return
 
         iface = self.interface_combo.currentData()
+        if not iface:
+            self.status_label.setText("Please select a valid network interface.")
+            self.status_label.setStyleSheet("color: #f85149; font-size: 12px;")
+            return
+
+        # Clear previous results
+        self.results_table.setRowCount(0)
+
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.progress_bar.setValue(15)
-        self.status_label.setText(f"Discovery started on {target} using {iface}...")
+        self.progress_bar.setValue(20)
+        self.status_label.setText(f"Scanning {target} via ARP on {iface}...")
         self.status_label.setStyleSheet("color: #3b82f6; font-size: 12px;")
-        self._add_placeholder_result()
+
+        # Start background worker
+        self.worker = ScanWorker(target, iface)
+        self.worker.finished.connect(self._on_scan_finished)
+        self.worker.error.connect(self._on_scan_error)
+        self.worker.start()
 
     def _on_stop(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.terminate()
+            self.worker.wait()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.status_label.setText("Discovery stopped by user.")
         self.status_label.setStyleSheet("color: #8b98a5; font-size: 12px;")
 
-    def _add_placeholder_result(self):
-        row = self.results_table.rowCount()
-        self.results_table.insertRow(row)
-        self.results_table.setItem(row, 0, QTableWidgetItem("192.168.1.1"))
-        self.results_table.setItem(row, 1, QTableWidgetItem("AA:BB:CC:DD:EE:FF"))
-        self.results_table.setItem(row, 2, QTableWidgetItem("gateway.local"))
-        self.results_table.setItem(row, 3, QTableWidgetItem("Example Vendor"))
-        self.results_table.setItem(row, 4, QTableWidgetItem("Up"))
-        self.results_table.setItem(row, 5, QTableWidgetItem("ARP"))
+    def _on_scan_finished(self, results: list):
+        self.progress_bar.setValue(100)
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+
+        if not results:
+            self.status_label.setText("Scan complete. No hosts found.")
+            self.status_label.setStyleSheet("color: #8b98a5; font-size: 12px;")
+            return
+
+        for host in results:
+            row = self.results_table.rowCount()
+            self.results_table.insertRow(row)
+            self.results_table.setItem(row, 0, QTableWidgetItem(host.get("ip", "")))
+            self.results_table.setItem(row, 1, QTableWidgetItem(host.get("mac", "")))
+            self.results_table.setItem(row, 2, QTableWidgetItem(host.get("hostname", "")))
+            self.results_table.setItem(row, 3, QTableWidgetItem(host.get("vendor", "")))
+            self.results_table.setItem(row, 4, QTableWidgetItem(host.get("status", "Up")))
+            self.results_table.setItem(row, 5, QTableWidgetItem(host.get("method", "ARP")))
+
+        self.status_label.setText(f"Scan complete. Found {len(results)} host(s).")
+        self.status_label.setStyleSheet("color: #3fb950; font-size: 12px;")
+
+    def _on_scan_error(self, message: str):
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.status_label.setText(f"Error: {message}")
+        self.status_label.setStyleSheet("color: #f85149; font-size: 12px;")
