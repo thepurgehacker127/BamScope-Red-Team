@@ -1,0 +1,34 @@
+[project]
+name = "bamscope-red-team"
+version = "0.1.0"
+description = "Professional Red Team network reconnaissance, device fingerprinting, and packet analysis platform"
+authors = [
+    { name = "thepurgehacker127" }
+]
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    "PySide6>=6.12.0",
+    "scapy>=2.8.0",
+    "python-nmap>=0.7.1",
+    "SQLAlchemy>=2.1.8",
+    "PyYAML>=6.0.3",
+    "rich>=15.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "black>=24.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
